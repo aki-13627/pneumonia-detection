@@ -24,12 +24,14 @@ from sklearn.metrics import (
 
 IMG_SIZE = 224
 BATCH_SIZE = 16
-EPOCHS_HEAD = 10
-EPOCHS_FINE = 40
+EPOCHS_HEAD = 40
+EPOCHS_FINE = 10
 NUM_FOLDS = 5
 DATA_DIR = './data/human'
 SAVE_DIR = './saved_models'
 LOG_DIR = './logs'
+
+FROZEN_LAYERS_COUNT = 100
 
 def apply_clahe(image):
     image = image.astype('uint8')
@@ -226,10 +228,8 @@ def main():
 
         print(f"Step 2: Fine Tuning (Unfrozen Body) for {EPOCHS_FINE} epochs...")
         base_model.trainable = True
-        
-        for layer in base_model.layers:
-            if isinstance(layer, tf.keras.layers.BatchNormalization):
-                layer.trainable = False
+        for layer in base_model.layers[:FROZEN_LAYERS_COUNT]:
+            layer.trainable = False
                 
         model.compile(optimizer=Adam(learning_rate=1e-5),
                       loss='binary_crossentropy', metrics=['accuracy'])
@@ -251,7 +251,7 @@ def main():
 
         evaluate_fold(model, val_generator, fold_no)
         
-        model_path = os.path.join(SAVE_DIR, f'mobilenetv2_fold{fold_no}.h5')
+        model_path = os.path.join(SAVE_DIR, f'mobilenetv2_fold{fold_no}.keras')
         model.save(model_path)
         print(f"Saved model: {model_path}")
         
