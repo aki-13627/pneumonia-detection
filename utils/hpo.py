@@ -93,40 +93,45 @@ def objective(trial, train_df, val_df):
         class_mode='binary', shuffle=False
     )
 
-    base_model.trainable = False
-    model.compile(optimizer=Adam(learning_rate=lr_head),
-                  loss='binary_crossentropy', metrics=['accuracy'])
-    model.fit(train_generator, epochs=EPOCHS_HEAD, validation_data=val_generator, verbose=2)
-    
-    base_model.trainable = True 
-    
-    for i, layer in enumerate(base_model.layers):
-        if isinstance(layer, tf.keras.layers.BatchNormalization):
-            layer.trainable = False
-        elif i < frozen_layers_count:
-            layer.trainable = False
-        else:
-            layer.trainable = True
+    try:
+        # === STAGE 1: ヘッドのみ学習 (Frozen Body) ===
+        base_model.trainable = False
+        model.compile(optimizer=Adam(learning_rate=lr_head),
+                      loss='binary_crossentropy', metrics=['accuracy'])
+        model.fit(train_generator, epochs=EPOCHS_HEAD, validation_data=val_generator, verbose=2)
+        
+        # === STAGE 2: レイヤー限定微調整 (Partial Fine Tuning) ===
+        base_model.trainable = True 
+        
+        for i, layer in enumerate(base_model.layers):
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = False
+            elif i < frozen_layers_count:
+                layer.trainable = False
+            else:
+                layer.trainable = True
 
-    model.compile(optimizer=Adam(learning_rate=lr_fine),
-                  loss='binary_crossentropy', metrics=['accuracy'])
-    
-    model.fit(
-        train_generator, 
-        epochs=EPOCHS_FINE, 
-        validation_data=val_generator,
-        verbose=2
-    )
-    
-    
-    y_true = val_generator.classes
-    predictions = model.predict(val_generator, verbose=2)
-    auc_score = roc_auc_score(y_true, predictions.ravel())
-    
-    tf.keras.backend.clear_session()
-    
-    
-    return auc_score
+        model.compile(optimizer=Adam(learning_rate=lr_fine),
+                      loss='binary_crossentropy', metrics=['accuracy'])
+        
+        model.fit(
+            train_generator, 
+            epochs=EPOCHS_FINE, 
+            validation_data=val_generator,
+            verbose=2
+        )
+        
+        y_true = val_generator.classes
+        predictions = model.predict(val_generator, verbose=2)
+        auc_score = roc_auc_score(y_true, predictions.ravel())
+        
+        return auc_score
+        
+    except Exception as e:
+        raise optuna.exceptions.TrialPruned()
+        
+    finally:
+        tf.keras.backend.clear_session()
 
 if __name__ == '__main__':
     
