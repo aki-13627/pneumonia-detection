@@ -72,6 +72,8 @@ def build_hpo_model(dropout_rate):
 
 def objective(trial, train_df, val_df):
     
+    set_gpu_config()
+    
     lr_head = trial.suggest_float("lr_head", 5e-4, 1e-2, log=True)
     lr_fine = trial.suggest_float("lr_fine", 1e-6, 1e-4, log=True)
     dropout_rate = trial.suggest_float("dropout_rate", 0.3, 0.6)
