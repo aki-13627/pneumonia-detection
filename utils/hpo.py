@@ -25,6 +25,14 @@ EPOCHS_HPO_TOTAL = EPOCHS_HEAD + EPOCHS_FINE
 
 N_JOBS = 8
 
+def set_gpu_config():
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            tf.config.experimental.set_memory_growth(gpus[0], True)
+        except RuntimeError as e:
+            pass
+
 def apply_clahe(image):
     image = image.astype('uint8')
     lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
@@ -86,7 +94,7 @@ def objective(trial, train_df, val_df):
     base_model.trainable = False
     model.compile(optimizer=Adam(learning_rate=lr_head),
                   loss='binary_crossentropy', metrics=['accuracy'])
-    model.fit(train_generator, epochs=EPOCHS_HEAD, validation_data=val_generator, verbose=1)
+    model.fit(train_generator, epochs=EPOCHS_HEAD, validation_data=val_generator, verbose=2)
     
     base_model.trainable = True 
     
@@ -110,7 +118,7 @@ def objective(trial, train_df, val_df):
     
     
     y_true = val_generator.classes
-    predictions = model.predict(val_generator, verbose=1)
+    predictions = model.predict(val_generator, verbose=2)
     auc_score = roc_auc_score(y_true, predictions.ravel())
     
     tf.keras.backend.clear_session()
