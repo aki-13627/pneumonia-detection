@@ -10,7 +10,7 @@ from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout, Inpu
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import (
     confusion_matrix, 
     roc_curve, 
@@ -31,7 +31,10 @@ DATA_DIR = './data/human'
 SAVE_DIR = './saved_models'
 LOG_DIR = './logs'
 
-FROZEN_LAYERS_COUNT = 100
+OPTIMAL_LR_HEAD = 0.006886023869360358
+OPTIMAL_LR_FINE = 9.985856790012088e-05
+OPTIMAL_DROPOUT = 0.3796178577283182
+OPTIMAL_FROZEN_LAYERS = 66
 
 def apply_clahe(image):
     image = image.astype('uint8')
@@ -166,6 +169,24 @@ def evaluate_fold(model, val_generator, fold_no):
     plt.legend(loc="lower right")
     plt.savefig(os.path.join(LOG_DIR, f'fold{fold_no}_roc.png'))
     plt.close()
+    
+def extract_patient_id(filename):
+    name_body = os.path.splitext(filename)[0]
+    
+    if name_body.startswith("NORMAL2"):
+        parts = name_body.split("-")
+        if len(parts) >= 3:
+            return f"patient_{parts[2]}"
+            
+    elif name_body.startswith("IM"):
+        parts = name_body.split("-")
+        if len(parts) >= 2:
+            return f"patient_{parts[1]}"
+            
+    if "person" in name_body:
+        return name_body.split("_")[0] 
+
+    return name_body
 
 def main():
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -186,30 +207,31 @@ def main():
                 filepaths.append(os.path.join(class_dir, f))
                 labels.append(class_name)
     
-    df = pd.DataFrame({'filename': filepaths, 'class': labels})
+    df = pd.DataFrame({'path': filepaths, 'class': labels})
     print(f"Total images: {len(df)}")
     
-    kfold = StratifiedKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=42)
+    df['filename'] = df['path'].apply(lambda x: os.path.basename(x))
+    df['patient_id'] = df['filename'].apply(extract_patient_id)
     df['class_code'] = df['class'].astype('category').cat.codes
+    
+    sgkf = StratifiedGroupKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=42)
     
     fold_no = 1
     all_acc_histories = []
     all_loss_histories = []
     
-    for train_index, val_index in kfold.split(df['filename'], df['class_code']):
+    for train_index, val_index in sgkf.split(df['filename'], df['class_code'], groups=df['patient_id']):
         print(f"\n{'='*20} Fold {fold_no} / {NUM_FOLDS} (MobileNetV2) {'='*20}")
-        
         train_df = df.iloc[train_index]
         val_df = df.iloc[val_index]
-        
         train_generator = train_datagen.flow_from_dataframe(
-            train_df, x_col='filename', y_col='class',
+            train_df, x_col='path', y_col='class',
             target_size=(IMG_SIZE, IMG_SIZE),
             batch_size=BATCH_SIZE, class_mode='binary', shuffle=True
         )
         
         val_generator = val_datagen.flow_from_dataframe(
-            val_df, x_col='filename', y_col='class',
+            val_df, x_col='path', y_col='class',
             target_size=(IMG_SIZE, IMG_SIZE),
             batch_size=BATCH_SIZE, class_mode='binary', shuffle=False
         )
@@ -235,15 +257,11 @@ def main():
         model.compile(optimizer=Adam(learning_rate=1e-5),
                       loss='binary_crossentropy', metrics=['accuracy'])
         
-        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.2, patience=3, min_lr=1e-7, verbose=1
-        )
         
         history2 = model.fit(
             train_generator, 
             epochs=EPOCHS_FINE, 
             validation_data=val_generator,
-            callbacks=[reduce_lr]
         )
         
         plot_history(history1, history2, fold_no)
