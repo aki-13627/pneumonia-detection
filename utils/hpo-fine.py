@@ -9,20 +9,21 @@ from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold 
 from sklearn.metrics import roc_auc_score
 
 IMG_SIZE = 224
+
 BATCH_SIZE = 16
 NUM_FOLDS = 5
 DATA_DIR = './data/human'
 
-
+# --- 固定パラメータ ---
 EPOCHS_HEAD = 10
 OPTIMAL_LR_HEAD = 0.006886023869360358
 OPTIMAL_DROPOUT = 0.3796178577283182
 OPTIMAL_FROZEN_LAYERS = 66
-
+# =======================================
 
 def set_gpu_config():
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -42,7 +43,6 @@ def apply_clahe(image):
     final = cv2.cvtColor(limg, cv2.COLOR_LAB2RGB)
     return final.astype('float32')
 
-
 train_datagen = ImageDataGenerator(
     preprocessing_function=apply_clahe,
     rescale=1./255,
@@ -50,16 +50,36 @@ train_datagen = ImageDataGenerator(
     horizontal_flip=True, brightness_range=[0.5, 1.5], fill_mode='nearest'
 )
 
-
 val_datagen = ImageDataGenerator(
     preprocessing_function=apply_clahe,
     rescale=1./255
 )
 
+# === 患者ID抽出関数（追加） ===
+def extract_patient_id(filename):
+    name_body = os.path.splitext(filename)[0]
+    
+    # NORMAL2-IM-1427-0001.jpeg -> patient_1427
+    if name_body.startswith("NORMAL2"):
+        parts = name_body.split("-")
+        if len(parts) >= 3:
+            return f"patient_{parts[2]}"
+            
+    # IM-0115-0001.jpeg -> patient_0115
+    elif name_body.startswith("IM"):
+        parts = name_body.split("-")
+        if len(parts) >= 2:
+            return f"patient_{parts[1]}"
+            
+    # person1946_bacteria_4874.jpeg -> patient_person1946
+    if "person" in name_body:
+        return name_body.split("_")[0] 
+
+    # 該当しない場合はファイル名自体をIDとする（安全策）
+    return name_body
+
 def build_fixed_model():
-    """
-    Dropout率を固定したモデルを構築
-    """
+    """固定パラメータでモデル構築"""
     base_model = MobileNetV2(
         weights='imagenet', 
         include_top=False, 
@@ -68,7 +88,6 @@ def build_fixed_model():
     
     x = base_model.output
     x = GlobalAveragePooling2D()(x)
-    
     x = Dropout(OPTIMAL_DROPOUT)(x) 
     predictions = Dense(1, activation='sigmoid')(x)
 
@@ -80,7 +99,7 @@ def objective(trial, train_df, val_df):
     
     
     
-    epochs_fine = trial.suggest_int("epochs_fine", 20, 90)
+    epochs_fine = trial.suggest_int("epochs_fine", 20, 100)
     
     lr_fine = trial.suggest_float("lr_fine", 1e-6, 5e-4, log=True)
     
@@ -99,17 +118,13 @@ def objective(trial, train_df, val_df):
     model, base_model = build_fixed_model()
 
     try:
-        
         base_model.trainable = False
         model.compile(optimizer=Adam(learning_rate=OPTIMAL_LR_HEAD),
                       loss='binary_crossentropy', metrics=['accuracy'])
         
-        
         model.fit(train_generator, epochs=EPOCHS_HEAD, verbose=2)
         
-        
         base_model.trainable = True 
-        
         
         for i, layer in enumerate(base_model.layers):
             if isinstance(layer, tf.keras.layers.BatchNormalization):
@@ -119,10 +134,8 @@ def objective(trial, train_df, val_df):
             else:
                 layer.trainable = True
 
-        
         model.compile(optimizer=Adam(learning_rate=lr_fine),
                       loss='binary_crossentropy', metrics=['accuracy'])
-        
         
         model.fit(
             train_generator, 
@@ -130,7 +143,6 @@ def objective(trial, train_df, val_df):
             validation_data=val_generator,
             verbose=2 
         )
-        
         
         y_true = val_generator.classes
         predictions = model.predict(val_generator, verbose=2)
@@ -140,14 +152,12 @@ def objective(trial, train_df, val_df):
         
     except Exception as e:
         print(f"Trial failed: {e}")
-        
         raise optuna.exceptions.TrialPruned()
         
     finally:
         tf.keras.backend.clear_session()
 
 if __name__ == '__main__':
-    
     filepaths = []
     labels = []
     for class_name in sorted(os.listdir(DATA_DIR)):
@@ -159,20 +169,23 @@ if __name__ == '__main__':
                 labels.append(class_name)
     
     df = pd.DataFrame({'filename': filepaths, 'class': labels})
+    
+    df['filename_base'] = df['filename'].apply(lambda x: os.path.basename(x))
+    
+    df['patient_id'] = df['filename_base'].apply(extract_patient_id)
+    
     df['class_code'] = df['class'].astype('category').cat.codes
+
+    sgkf = StratifiedGroupKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=42)
     
     
-    kfold = StratifiedKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=42)
-    train_index, val_index = next(kfold.split(df['filename'], df['class_code']))
+    train_index, val_index = next(sgkf.split(df['filename'], df['class_code'], groups=df['patient_id']))
     
     train_df = df.iloc[train_index]
     val_df = df.iloc[val_index]
 
-    print(f"--- Optuna HPO Start (Optimizing Epochs & LR for Fine Tuning) ---")
-    print(f"Fixed LR_HEAD: {OPTIMAL_LR_HEAD}")
-    print(f"Fixed Dropout: {OPTIMAL_DROPOUT}")
-    print(f"Fixed Frozen Layers: {OPTIMAL_FROZEN_LAYERS}")
-    
+    print(f"\nTraining Samples: {len(train_df)}")
+    print(f"Validation Samples: {len(val_df)}")
     
     study = optuna.create_study(direction='maximize', study_name="FineTuning_Epochs_LR_Opt")
     study.optimize(lambda trial: objective(trial, train_df, val_df), n_trials=50, show_progress_bar=True)
