@@ -18,7 +18,7 @@ NUM_FOLDS = 5
 DATA_DIR = './data/human'
 
 
-EPOCHS_HEAD = 40
+EPOCHS_HEAD = 10
 OPTIMAL_LR_HEAD = 0.006886023869360358
 OPTIMAL_DROPOUT = 0.3796178577283182
 OPTIMAL_FROZEN_LAYERS = 66
@@ -80,7 +80,7 @@ def objective(trial, train_df, val_df):
     
     
     
-    epochs_fine = trial.suggest_int("epochs_fine", 10, 50)
+    epochs_fine = trial.suggest_int("epochs_fine", 20, 90)
     
     lr_fine = trial.suggest_float("lr_fine", 1e-6, 5e-4, log=True)
     
@@ -105,7 +105,7 @@ def objective(trial, train_df, val_df):
                       loss='binary_crossentropy', metrics=['accuracy'])
         
         
-        model.fit(train_generator, epochs=EPOCHS_HEAD, verbose=0)
+        model.fit(train_generator, epochs=EPOCHS_HEAD, verbose=2)
         
         
         base_model.trainable = True 
@@ -128,12 +128,12 @@ def objective(trial, train_df, val_df):
             train_generator, 
             epochs=epochs_fine, 
             validation_data=val_generator,
-            verbose=0 
+            verbose=2 
         )
         
         
         y_true = val_generator.classes
-        predictions = model.predict(val_generator, verbose=0)
+        predictions = model.predict(val_generator, verbose=2)
         auc_score = roc_auc_score(y_true, predictions.ravel())
         
         return auc_score
