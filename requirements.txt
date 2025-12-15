@@ -8,3 +8,4 @@ seaborn
 optuna
 snntorch
 imblearn
+torch
