@@ -20,6 +20,7 @@ from sklearn.metrics import (
     recall_score, 
     f1_score
 )
+import datetime
 
 
 IMG_SIZE = 224
@@ -107,11 +108,11 @@ def plot_history(history1, history2, fold_no):
     plt.ylabel('Loss')
     plt.legend(loc='upper right')
 
-    save_path = os.path.join(LOG_DIR, f'fold{fold_no}_history.png')
+    save_path = os.path.join(LOG_DIR, f'fold{fold_no}_history_{run_id}.png')
     plt.savefig(save_path)
     plt.close()
 
-def plot_all_folds_comparison(acc_list, loss_list):
+def plot_all_folds_comparison(acc_list, loss_list, run_id):
     plt.figure(figsize=(14, 6))
 
     plt.subplot(1, 2, 1)
@@ -132,10 +133,10 @@ def plot_all_folds_comparison(acc_list, loss_list):
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.5)
 
-    plt.savefig(os.path.join(LOG_DIR, 'all_folds_comparison.png'))
+    plt.savefig(os.path.join(LOG_DIR, 'all_folds_comparison_{run_id}.png'))
     plt.close()
 
-def evaluate_fold(model, val_generator, fold_no):
+def evaluate_fold(model, val_generator, fold_no, run_id):
     y_true = val_generator.classes
     predictions = model.predict(val_generator, verbose=2)
     y_score = predictions.ravel()
@@ -194,6 +195,7 @@ def main():
     filepaths = []
     labels = []
     classes = sorted(os.listdir(DATA_DIR))
+    run_id = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     
     print("Loading data...")
     for class_name in classes:
@@ -267,16 +269,16 @@ def main():
         all_acc_histories.append(history1.history['accuracy'] + history2.history['accuracy'])
         all_loss_histories.append(history1.history['loss'] + history2.history['loss'])
 
-        evaluate_fold(model, val_generator, fold_no)
+        evaluate_fold(model, val_generator, fold_no, run_id)
         
-        model_path = os.path.join(SAVE_DIR, f'mobilenetv2_fold{fold_no}.keras')
+        model_path = os.path.join(SAVE_DIR, f'mobilenetv2_fold{fold_no}_{run_id}.keras')
         model.save(model_path)
         print(f"Saved model: {model_path}")
         
         fold_no += 1
         tf.keras.backend.clear_session()
 
-    plot_all_folds_comparison(all_acc_histories, all_loss_histories)
+    plot_all_folds_comparison(all_acc_histories, all_loss_histories, run_id)
     print("All training completed.")
 
 if __name__ == '__main__':
